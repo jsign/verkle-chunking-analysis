@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +11,14 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 )
 
-type PCTrace map[string][]int
+type contractTrace struct {
+	Code []byte
+	PCs  []uint64
+}
+
+type PCTrace struct {
+	Contracts map[common.Address]contractTrace
+}
 
 func main() {
 	dirEntries, err := os.ReadDir("pctrace")
@@ -22,8 +30,9 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		buf := bytes.NewReader(pcTraceBytes)
 		var pcTrace PCTrace
-		if err := json.Unmarshal(pcTraceBytes, &pcTrace); err != nil {
+		if err := gob.NewDecoder(buf).Decode(&pcTrace); err != nil {
 			log.Fatal(err)
 		}
 		result, err := processTrace(pcTrace)
@@ -44,9 +53,8 @@ func processTrace(trace PCTrace) (Result, error) {
 	accessEvents := state.NewAccessEvents(nil)
 
 	var result Result
-	for contractAddressStr, pcs := range trace {
-		contractAddr := common.HexToAddress(contractAddressStr)
-		for _, pc := range pcs {
+	for contractAddr, pcs := range trace.Contracts {
+		for _, pc := range pcs.PCs {
 			gas := accessEvents.CodeChunksRangeGas(contractAddr, uint64(pc), 1, 1, false)
 			if gas > 0 {
 				result.numCodeChunks++
