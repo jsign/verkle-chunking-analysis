@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/gob"
 	"fmt"
 	"log"
@@ -12,8 +13,7 @@ import (
 )
 
 type contractTrace struct {
-	Code []byte
-	PCs  []uint64
+	PCs []uint64
 }
 
 type PCTrace struct {
@@ -25,6 +25,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	f, err := os.OpenFile("trace_lengths.csv", os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	csvWriter := csv.NewWriter(f)
+	defer csvWriter.Flush()
+	csvWriter.Write([]string{"tx", "length"})
+
 	for _, dirEntry := range dirEntries {
 		pcTraceBytes, err := os.ReadFile("pctrace/" + dirEntry.Name())
 		if err != nil {
@@ -33,6 +42,14 @@ func main() {
 		buf := bytes.NewReader(pcTraceBytes)
 		var pcTrace PCTrace
 		if err := gob.NewDecoder(buf).Decode(&pcTrace); err != nil {
+			log.Fatal(err)
+		}
+
+		var traceLength int
+		for _, pcs := range pcTrace.Contracts {
+			traceLength += len(pcs.PCs)
+		}
+		if err := csvWriter.Write([]string{dirEntry.Name(), fmt.Sprintf("%d", traceLength)}); err != nil {
 			log.Fatal(err)
 		}
 
