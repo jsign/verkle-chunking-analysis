@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/jsign/verkle-chunking-analysis/analysis"
 	"github.com/jsign/verkle-chunking-analysis/analysis/z31bytechunker"
 )
 
@@ -32,9 +34,40 @@ func main() {
 	}
 	csvWriter := csv.NewWriter(f)
 	defer csvWriter.Flush()
-	csvWriter.Write([]string{"tx", "length"})
+	csvWriter.Write([]string{"tx", "pc_count", "chunk_count", "gas"})
 
-	for _, dirEntry := range dirEntries {
+	// Splice dirEntries into runtime.NumCPU() slices
+	numProcessors := runtime.NumCPU()
+	sliceSize := len(dirEntries) / numProcessors
+	processorResults := make(chan processorResult)
+	for i := 0; i < numProcessors; i++ {
+		if i == numProcessors-1 {
+			go processFiles(dirEntries[i*sliceSize:], processorResults)
+		} else {
+			go processFiles(dirEntries[i*sliceSize:(i+1)*sliceSize], processorResults)
+		}
+	}
+	for i := 0; i < numProcessors; i++ {
+		result := <-processorResults
+		for _, txExecLength := range result.txExecutionLength {
+			csvWriter.Write([]string{txExecLength.tx, fmt.Sprintf("%d", txExecLength.length), fmt.Sprintf("%d", result.report.NumCodeChunks), fmt.Sprintf("%d", result.report.Gas)})
+		}
+	}
+}
+
+type txExecLength struct {
+	tx     string
+	length int
+}
+type processorResult struct {
+	txExecutionLength []txExecLength
+	report            analysis.Report
+}
+
+func processFiles(dirEntries []os.DirEntry, out chan<- processorResult) {
+	var ret processorResult
+
+	for i, dirEntry := range dirEntries {
 		pcTraceBytes, err := os.ReadFile("pctrace/" + dirEntry.Name())
 		if err != nil {
 			log.Fatal(err)
@@ -49,9 +82,7 @@ func main() {
 		for _, pcs := range pcTrace.Contracts {
 			traceLength += len(pcs.PCs)
 		}
-		if err := csvWriter.Write([]string{dirEntry.Name(), fmt.Sprintf("%d", traceLength)}); err != nil {
-			log.Fatal(err)
-		}
+		ret.txExecutionLength = append(ret.txExecutionLength, txExecLength{tx: dirEntry.Name(), length: traceLength})
 
 		chunker := z31bytechunker.New()
 		for contractAddr, pcs := range pcTrace.Contracts {
@@ -59,10 +90,11 @@ func main() {
 				chunker.AccessPC(contractAddr, pc)
 			}
 		}
+		ret.report = chunker.GetReport()
 
-		report := chunker.GetReport()
-		if report.NumCodeChunks > 10 {
-			fmt.Printf("%s: %d\n", dirEntry.Name(), report.NumCodeChunks)
+		if i%10_000 == 0 {
+			fmt.Printf("%.2f%%\n", float64(i)/float64(len(dirEntries))*100)
 		}
 	}
+	out <- ret
 }

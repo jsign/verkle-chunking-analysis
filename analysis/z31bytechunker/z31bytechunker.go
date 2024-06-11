@@ -10,6 +10,7 @@ type Chunker struct {
 	accessEvents *state.AccessEvents
 
 	codeChunks int
+	gas        uint64
 }
 
 func New() *Chunker {
@@ -18,6 +19,7 @@ func New() *Chunker {
 
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
 	gas := c.accessEvents.CodeChunksRangeGas(addr, uint64(pc), 1, 1, false)
+	c.gas += gas
 	if gas > 0 {
 		c.codeChunks++
 	}
@@ -25,5 +27,5 @@ func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
 }
 
 func (c *Chunker) GetReport() analysis.Report {
-	return analysis.Report{NumCodeChunks: c.codeChunks}
+	return analysis.Report{NumCodeChunks: c.codeChunks, Gas: c.gas}
 }
