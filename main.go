@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/jsign/verkle-chunking-analysis/analysis/z31bytechunker"
 )
 
 type contractTrace struct {
@@ -35,32 +35,17 @@ func main() {
 		if err := gob.NewDecoder(buf).Decode(&pcTrace); err != nil {
 			log.Fatal(err)
 		}
-		result, err := processTrace(pcTrace)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if result.numCodeChunks > 5 {
-			fmt.Printf("%s: %d\n", dirEntry.Name(), result.numCodeChunks)
-		}
-	}
-}
 
-type Result struct {
-	numCodeChunks int
-}
-
-func processTrace(trace PCTrace) (Result, error) {
-	accessEvents := state.NewAccessEvents(nil)
-
-	var result Result
-	for contractAddr, pcs := range trace.Contracts {
-		for _, pc := range pcs.PCs {
-			gas := accessEvents.CodeChunksRangeGas(contractAddr, uint64(pc), 1, 1, false)
-			if gas > 0 {
-				result.numCodeChunks++
+		chunker := z31bytechunker.New()
+		for contractAddr, pcs := range pcTrace.Contracts {
+			for _, pc := range pcs.PCs {
+				chunker.AccessPC(contractAddr, pc)
 			}
 		}
-	}
 
-	return result, nil
+		report := chunker.GetReport()
+		if report.NumCodeChunks > 10 {
+			fmt.Printf("%s: %d\n", dirEntry.Name(), report.NumCodeChunks)
+		}
+	}
 }
