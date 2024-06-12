@@ -67,7 +67,7 @@ func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string
 				z32ByteChunker.AccessPC(contractAddr, pc)
 			}
 		}
-		ret.reports = append(ret.reports, z31ByteChunker.GetReport())
+		ret.reports = append(ret.reports, z32ByteChunker.GetReport())
 
 		if i%5_000 == 0 {
 			fmt.Printf("%.2f%%\n", float64(i)/float64(len(pcTraces))*100)

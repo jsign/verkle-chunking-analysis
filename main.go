@@ -34,7 +34,7 @@ func main() {
 	csvWriter := csv.NewWriter(f)
 	defer csvWriter.Flush()
 	// TODO: generalize
-	csvWriter.Write([]string{"tx", "execution_length", "31_byte_chunker_chunk_gas", "32_byte_chunker_chunk_gas"})
+	csvWriter.Write([]string{"tx", "execution_length", "31bytechunker_gas", "32bytechunker_gas"})
 
 	numProcessors := runtime.NumCPU()
 	sliceSize := len(pcTracePaths) / numProcessors
