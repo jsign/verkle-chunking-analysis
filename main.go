@@ -22,7 +22,6 @@ type contractTrace struct {
 }
 
 type PCTrace struct {
-	Contract       string
 	ContractTraces map[common.Address]contractTrace
 }
 
@@ -88,8 +87,11 @@ func processFiles(dirEntries []os.DirEntry, out chan<- processorResult) {
 		}
 		ret.txExecutionLength = append(ret.txExecutionLength, txExecLength{tx: dirEntry.Name(), length: traceLength})
 
-		contractAddr := common.HexToAddress(pcTrace.Contract)
-		chunker := z31bytechunker.New(contractAddr)
+		touchedContracts := make([]common.Address, 0, len(pcTrace.ContractTraces))
+		for contractAddr := range pcTrace.ContractTraces {
+			touchedContracts = append(touchedContracts, contractAddr)
+		}
+		chunker := z31bytechunker.New(touchedContracts)
 		for contractAddr, pcs := range pcTrace.ContractTraces {
 			for _, pc := range pcs.PCs {
 				chunker.AccessPC(contractAddr, pc)
