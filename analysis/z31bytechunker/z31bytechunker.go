@@ -13,8 +13,10 @@ type Chunker struct {
 	gas        uint64
 }
 
-func New() *Chunker {
-	return &Chunker{accessEvents: state.NewAccessEvents(nil)}
+func New(contractAddr common.Address) *Chunker {
+	ae := state.NewAccessEvents(nil)
+	ae.AddTxDestination(contractAddr, false) // Warm account header.
+	return &Chunker{accessEvents: ae}
 }
 
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
