@@ -26,12 +26,22 @@ type PCTrace struct {
 }
 
 func main() {
-	dirEntries, err := os.ReadDir(pcTraceFolder)
+	allDirEntries, err := os.ReadDir(pcTraceFolder)
 	if err != nil {
 		log.Fatal(err)
 	}
+	dirEntries := make([]os.DirEntry, 0, len(allDirEntries))
+	for i, dirEntry := range allDirEntries {
+		if dirEntry.IsDir() {
+			continue
+		}
+		if i > 1_000_000 {
+			break
+		}
+		dirEntries = append(dirEntries, dirEntry)
+	}
 
-	f, err := os.OpenFile("trace_lengths.csv", os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile("trace_lengths.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,10 +49,9 @@ func main() {
 	defer csvWriter.Flush()
 	csvWriter.Write([]string{"tx", "execution_length", "chunks_accessed", "chunk_gas"})
 
-	// Splice dirEntries into runtime.NumCPU() slices
 	numProcessors := runtime.NumCPU()
 	sliceSize := len(dirEntries) / numProcessors
-	processorResults := make(chan processorResult, 1_000)
+	processorResults := make(chan processorResult)
 	for i := 0; i < numProcessors; i++ {
 		if i == numProcessors-1 {
 			go processFiles(dirEntries[i*sliceSize:], processorResults)
@@ -53,7 +62,7 @@ func main() {
 	for i := 0; i < len(dirEntries); i++ {
 		result := <-processorResults
 		for _, txExecLength := range result.txExecutionLength {
-			csvWriter.Write([]string{txExecLength.tx, fmt.Sprintf("%d", txExecLength.length), fmt.Sprintf("%d", result.report.NumCodeChunks), fmt.Sprintf("%d", result.report.Gas)})
+			csvWriter.Write([]string{txExecLength.tx[:10], fmt.Sprintf("%d", txExecLength.length), fmt.Sprintf("%d", result.report.NumCodeChunks), fmt.Sprintf("%d", result.report.Gas)})
 		}
 	}
 }
@@ -69,6 +78,9 @@ type processorResult struct {
 
 func processFiles(dirEntries []os.DirEntry, out chan<- processorResult) {
 	for i, dirEntry := range dirEntries {
+		if dirEntry.IsDir() {
+			continue
+		}
 		var ret processorResult
 
 		pcTraceBytes, err := os.ReadFile(path.Join(pcTraceFolder, dirEntry.Name()))
