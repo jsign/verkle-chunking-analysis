@@ -9,8 +9,7 @@ import (
 type Chunker struct {
 	accessEvents *state.AccessWitness
 
-	codeChunks int
-	gas        uint64
+	gas uint64
 }
 
 func New(touchedContracts []common.Address) *Chunker {
@@ -29,12 +28,9 @@ func New(touchedContracts []common.Address) *Chunker {
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
 	gas := c.accessEvents.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), uint64(pc), 1, 1, false)
 	c.gas += gas
-	if gas > 0 {
-		c.codeChunks++
-	}
 	return nil
 }
 
 func (c *Chunker) GetReport() analysis.Report {
-	return analysis.Report{NumCodeChunks: c.codeChunks, Gas: c.gas}
+	return analysis.Report{Gas: c.gas}
 }
