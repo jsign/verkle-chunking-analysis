@@ -37,8 +37,11 @@ func New(touchedContracts []common.Address, contractBytecodes map[common.Address
 		gas += ae.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), 0, uint64(totalTableSize), uint64(totalTableSize), false)
 		contractPCShift[addr] = totalTableSize
 
-		// Record contract chunked size.
+		// Record contract chunked size, aligned to 32-bytes.
 		chunkedSizes[addr] = totalTableSize + len(contractBytecodes[addr])
+		if chunkedSizes[addr]%32 != 0 {
+			chunkedSizes[addr] += 32 - chunkedSizes[addr]%32
+		}
 
 	}
 	return &Chunker{aw: ae, gas: gas, contractPCShift: contractPCShift, chunkedSizes: chunkedSizes}, nil

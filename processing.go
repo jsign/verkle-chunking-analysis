@@ -22,8 +22,7 @@ type pcTraceResult struct {
 }
 
 func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string, out chan<- pcTraceResult) {
-	for i, pcTracePath := range pcTraces {
-
+	for _, pcTracePath := range pcTraces {
 		pcTraceBytes, err := os.ReadFile(pcTracePath)
 		if err != nil {
 			out <- pcTraceResult{err: fmt.Errorf("error reading file: %w", err)}
@@ -75,11 +74,6 @@ func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string
 			}
 		}
 		res.chunkersMetrics = append(res.chunkersMetrics, z32ByteChunker.GetReport())
-
-		if i%5_000 == 0 {
-			fmt.Printf("%.2f%%\n", float64(i)/float64(len(pcTraces))*100)
-		}
-
 		out <- res
 	}
 }

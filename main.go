@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
 	"path"
 	"runtime"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"golang.org/x/sync/errgroup"
 )
 
 var pcTraceFolder = "/data/pctrace"
@@ -38,7 +41,7 @@ func main() {
 		}
 	}
 
-	if err := exportCSVResults(processorResults, len(pcTracePaths)); err != nil {
+	if err := outputResults(processorResults, len(pcTracePaths), contractBytecodes); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -63,19 +66,34 @@ func loadData(folderPath string, limit int) ([]string, map[common.Address][]byte
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not read directory %s: %w", path.Join(folderPath, "code"), err)
 	}
+
+	fmt.Printf("Loading contract bytecodes... ")
+	var lock sync.Mutex
+	group, _ := errgroup.WithContext(context.Background())
+	group.SetLimit(runtime.NumCPU())
 	contractBytecodes := map[common.Address][]byte{}
 	for _, dirEntry := range dirEntries {
-		bytecode, err := os.ReadFile(path.Join(folderPath, "code", dirEntry.Name()))
-		if err != nil {
-			return nil, nil, fmt.Errorf("could not read file %s: %w", path.Join(folderPath, dirEntry.Name()), err)
-		}
-		contractBytecodes[common.HexToAddress(dirEntry.Name())] = bytecode
+		dirEntry := dirEntry
+		group.Go(func() error {
+			bytecode, err := os.ReadFile(path.Join(folderPath, "code", dirEntry.Name()))
+			if err != nil {
+				return fmt.Errorf("could not read file %s: %w", path.Join(folderPath, dirEntry.Name()), err)
+			}
+			lock.Lock()
+			contractBytecodes[common.HexToAddress(dirEntry.Name())] = bytecode
+			lock.Unlock()
+			return nil
+		})
 	}
+	if err := group.Wait(); err != nil {
+		return nil, nil, fmt.Errorf("error loading contract bytecodes: %s", err)
+	}
+	fmt.Printf("OK\n")
 
 	return pcTracesPaths, contractBytecodes, nil
 }
 
-func exportCSVResults(processorResults chan pcTraceResult, expTotalResults int) error {
+func outputResults(processorResults chan pcTraceResult, expTotalResults int, contractsBytecodes map[common.Address][]byte) error {
 	chunkerResults := make([]pcTraceResult, 0, expTotalResults)
 	for i := 0; i < expTotalResults; i++ {
 		result := <-processorResults
@@ -83,6 +101,9 @@ func exportCSVResults(processorResults chan pcTraceResult, expTotalResults int) 
 			return fmt.Errorf("error processing: %s", result.err)
 		}
 		chunkerResults = append(chunkerResults, result)
+		if i%(expTotalResults/8) == 0 {
+			fmt.Printf("Processing traces... %d%%\n", (i*100)/expTotalResults)
+		}
 	}
 	var chunkerNames []string
 	for _, cm := range chunkerResults[0].chunkersMetrics {
@@ -92,7 +113,7 @@ func exportCSVResults(processorResults chan pcTraceResult, expTotalResults int) 
 	if err := genGasCSV(chunkerResults, chunkerNames); err != nil {
 		return fmt.Errorf("error exporting gas csv: %s", err)
 	}
-	if err := genChunkedContractSizesCSV(chunkerResults, chunkerNames); err != nil {
+	if err := genChunkedContractSizesCSV(chunkerResults, chunkerNames, contractsBytecodes); err != nil {
 		return fmt.Errorf("error exporting gas csv: %s", err)
 	}
 
@@ -123,14 +144,14 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 	return nil
 }
 
-func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string) error {
+func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, contractBytecodes map[common.Address][]byte) error {
 	csvGas, err := os.OpenFile("chunker_contract_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not create file: %s", err)
 	}
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
-	columns := []string{"contract_addr"}
+	columns := []string{"contract_addr", "original_size"}
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_chunked_size", cn))
 	}
@@ -148,7 +169,7 @@ func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string) 
 		}
 	}
 	for contractAddr, chunkedSizes := range contractChunkedSizes {
-		line := []string{contractAddr.String()}
+		line := []string{contractAddr.String(), fmt.Sprintf("%d", len(contractBytecodes[contractAddr]))}
 		for _, size := range chunkedSizes {
 			line = append(line, fmt.Sprintf("%d", size))
 		}
