@@ -12,12 +12,14 @@ type Chunker struct {
 	aw *state.AccessWitness
 
 	gas             uint64
+	chunkedSizes    map[common.Address]int
 	contractPCShift map[common.Address]int
 }
 
-func New(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte) *Chunker {
+func New(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte) (*Chunker, error) {
 	ae := state.NewAccessWitness(nil)
 
+	chunkedSizes := map[common.Address]int{}
 	var gas uint64
 	contractPCShift := map[common.Address]int{}
 	for _, addr := range touchedContracts {
@@ -34,8 +36,12 @@ func New(touchedContracts []common.Address, contractBytecodes map[common.Address
 		totalTableSize := tableSizeEncoded + len(table)
 		gas += ae.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), 0, uint64(totalTableSize), uint64(totalTableSize), false)
 		contractPCShift[addr] = totalTableSize
+
+		// Record contract chunked size.
+		chunkedSizes[addr] = totalTableSize + len(contractBytecodes[addr])
+
 	}
-	return &Chunker{aw: ae, gas: gas, contractPCShift: contractPCShift}
+	return &Chunker{aw: ae, gas: gas, contractPCShift: contractPCShift, chunkedSizes: chunkedSizes}, nil
 }
 
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
@@ -44,8 +50,8 @@ func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
 	return nil
 }
 
-func (c *Chunker) GetReport() analysis.Report {
-	return analysis.Report{Gas: c.gas}
+func (c *Chunker) GetReport() analysis.ChunkerMetrics {
+	return analysis.ChunkerMetrics{ChunkerName: "32bytechunker", Gas: c.gas, ContractsChunkedSize: c.chunkedSizes}
 }
 
 // This is a modified TouchCodeChunksRangeAndChargeGas function from the go-ethereum/core/state/access_witness.go

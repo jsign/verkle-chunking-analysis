@@ -22,23 +22,14 @@ type PCTrace struct {
 }
 
 func main() {
-	pcTracePaths, contractBytecodes, err := loadData(pcTraceFolder, 1_000_000)
+	pcTracePaths, contractBytecodes, err := loadData(pcTraceFolder, -1)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	f, err := os.OpenFile("trace_lengths.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	csvWriter := csv.NewWriter(f)
-	defer csvWriter.Flush()
-	// TODO: generalize
-	csvWriter.Write([]string{"tx", "execution_length", "31bytechunker_gas", "32bytechunker_gas"})
 
 	numProcessors := runtime.NumCPU()
 	sliceSize := len(pcTracePaths) / numProcessors
-	processorResults := make(chan processorResult)
+	processorResults := make(chan pcTraceResult)
 	for i := 0; i < numProcessors; i++ {
 		if i == numProcessors-1 {
 			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:], processorResults)
@@ -46,15 +37,9 @@ func main() {
 			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:(i+1)*sliceSize], processorResults)
 		}
 	}
-	for i := 0; i < len(pcTracePaths); i++ {
-		result := <-processorResults
-		for _, txExecLength := range result.txExecutionLength {
-			line := []string{txExecLength.tx[:10], fmt.Sprintf("%d", txExecLength.length)}
-			for _, report := range result.reports {
-				line = append(line, fmt.Sprintf("%d", report.Gas))
-			}
-			csvWriter.Write(line)
-		}
+
+	if err := exportCSVResults(processorResults, len(pcTracePaths)); err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -68,7 +53,7 @@ func loadData(folderPath string, limit int) ([]string, map[common.Address][]byte
 		if dirEntry.IsDir() {
 			continue
 		}
-		if i >= limit {
+		if limit != -1 && i >= limit {
 			break
 		}
 		pcTracesPaths = append(pcTracesPaths, path.Join(folderPath, dirEntry.Name()))
@@ -88,4 +73,86 @@ func loadData(folderPath string, limit int) ([]string, map[common.Address][]byte
 	}
 
 	return pcTracesPaths, contractBytecodes, nil
+}
+
+func exportCSVResults(processorResults chan pcTraceResult, expTotalResults int) error {
+	chunkerResults := make([]pcTraceResult, 0, expTotalResults)
+	for i := 0; i < expTotalResults; i++ {
+		result := <-processorResults
+		if result.err != nil {
+			return fmt.Errorf("error processing: %s", result.err)
+		}
+		chunkerResults = append(chunkerResults, result)
+	}
+	var chunkerNames []string
+	for _, cm := range chunkerResults[0].chunkersMetrics {
+		chunkerNames = append(chunkerNames, cm.ChunkerName)
+	}
+
+	if err := genGasCSV(chunkerResults, chunkerNames); err != nil {
+		return fmt.Errorf("error exporting gas csv: %s", err)
+	}
+	if err := genChunkedContractSizesCSV(chunkerResults, chunkerNames); err != nil {
+		return fmt.Errorf("error exporting gas csv: %s", err)
+	}
+
+	return nil
+}
+
+func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
+	csvGas, err := os.OpenFile("gas_analysis.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("could not create file: %s", err)
+	}
+	csvGasWriter := csv.NewWriter(csvGas)
+	defer csvGasWriter.Flush()
+	columns := []string{"tx", "execution_length"}
+	for _, cn := range chunkerNames {
+		columns = append(columns, fmt.Sprintf("%s_gas", cn))
+	}
+	csvGasWriter.Write(columns)
+
+	for _, result := range results {
+		line := []string{result.tx[:10], fmt.Sprintf("%d", result.execLength)}
+		for _, cm := range result.chunkersMetrics {
+			line = append(line, fmt.Sprintf("%d", cm.Gas))
+		}
+		csvGasWriter.Write(line)
+	}
+
+	return nil
+}
+
+func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string) error {
+	csvGas, err := os.OpenFile("chunker_contract_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("could not create file: %s", err)
+	}
+	csvGasWriter := csv.NewWriter(csvGas)
+	defer csvGasWriter.Flush()
+	columns := []string{"contract_addr"}
+	for _, cn := range chunkerNames {
+		columns = append(columns, fmt.Sprintf("%s_chunked_size", cn))
+	}
+	csvGasWriter.Write(columns)
+
+	contractChunkedSizes := map[common.Address][]int{}
+	for _, result := range results {
+		for chunkerIdx, cm := range result.chunkersMetrics {
+			for addr, size := range cm.ContractsChunkedSize {
+				if contractChunkedSizes[addr] == nil {
+					contractChunkedSizes[addr] = make([]int, len(chunkerNames))
+				}
+				contractChunkedSizes[addr][chunkerIdx] = size
+			}
+		}
+	}
+	for contractAddr, chunkedSizes := range contractChunkedSizes {
+		line := []string{contractAddr.String()}
+		for _, size := range chunkedSizes {
+			line = append(line, fmt.Sprintf("%d", size))
+		}
+		csvGasWriter.Write(line)
+	}
+	return nil
 }

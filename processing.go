@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"log"
 	"os"
 	"path"
 
@@ -14,27 +13,27 @@ import (
 	"github.com/jsign/verkle-chunking-analysis/analysis/z32bytechunker"
 )
 
-type txExecLength struct {
-	tx     string
-	length int
-}
-type processorResult struct {
-	txExecutionLength []txExecLength
-	reports           []analysis.Report
+type pcTraceResult struct {
+	err error
+
+	tx              string
+	execLength      int
+	chunkersMetrics []analysis.ChunkerMetrics
 }
 
-func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string, out chan<- processorResult) {
+func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string, out chan<- pcTraceResult) {
 	for i, pcTracePath := range pcTraces {
-		var ret processorResult
 
 		pcTraceBytes, err := os.ReadFile(pcTracePath)
 		if err != nil {
-			log.Fatal(err)
+			out <- pcTraceResult{err: fmt.Errorf("error reading file: %w", err)}
+			return
 		}
 		buf := bytes.NewReader(pcTraceBytes)
 		var pcTrace PCTrace
 		if err := gob.NewDecoder(buf).Decode(&pcTrace); err != nil {
-			log.Fatal(err)
+			out <- pcTraceResult{err: fmt.Errorf("error decoding file: %w", err)}
+			return
 		}
 
 		var traceLength int
@@ -42,7 +41,7 @@ func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string
 			traceLength += len(pcs.PCs)
 		}
 		_, txHash := path.Split(pcTracePath)
-		ret.txExecutionLength = append(ret.txExecutionLength, txExecLength{tx: txHash, length: traceLength})
+		res := pcTraceResult{tx: txHash, execLength: traceLength}
 
 		touchedContracts := make([]common.Address, 0, len(pcTrace.ContractTraces))
 		for contractAddr := range pcTrace.ContractTraces {
@@ -52,26 +51,35 @@ func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string
 		// TODO: create interface and list of chunkers below.
 
 		// 31-byte chunker
-		z31ByteChunker := z31bytechunker.New(touchedContracts)
+		z31ByteChunker, err := z31bytechunker.New(touchedContracts, contractBytecodes)
+		if err != nil {
+			out <- pcTraceResult{err: fmt.Errorf("error creating z31ByteChunker: %w", err)}
+			return
+		}
 		for contractAddr, pcs := range pcTrace.ContractTraces {
 			for _, pc := range pcs.PCs {
 				z31ByteChunker.AccessPC(contractAddr, pc)
 			}
 		}
-		ret.reports = append(ret.reports, z31ByteChunker.GetReport())
+		res.chunkersMetrics = append(res.chunkersMetrics, z31ByteChunker.GetReport())
 
 		// 32-byte chunker
-		z32ByteChunker := z32bytechunker.New(touchedContracts, contractBytecodes)
+		z32ByteChunker, err := z32bytechunker.New(touchedContracts, contractBytecodes)
+		if err != nil {
+			out <- pcTraceResult{err: fmt.Errorf("error creating z31ByteChunker: %w", err)}
+			return
+		}
 		for contractAddr, pcs := range pcTrace.ContractTraces {
 			for _, pc := range pcs.PCs {
 				z32ByteChunker.AccessPC(contractAddr, pc)
 			}
 		}
-		ret.reports = append(ret.reports, z32ByteChunker.GetReport())
+		res.chunkersMetrics = append(res.chunkersMetrics, z32ByteChunker.GetReport())
 
 		if i%5_000 == 0 {
 			fmt.Printf("%.2f%%\n", float64(i)/float64(len(pcTraces))*100)
 		}
-		out <- ret
+
+		out <- res
 	}
 }
