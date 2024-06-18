@@ -42,7 +42,7 @@ func (c *Chunker) Init(touchedContracts []common.Address, contractBytecodes map[
 }
 
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
-	c.gas += c.accessEvents.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), uint64(pc), 1, uint64(len(c.contractBytecodes[addr])), false)
+	c.gas += c.accessEvents.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), pc, 1, uint64(len(c.contractBytecodes[addr])), false)
 	return nil
 }
 

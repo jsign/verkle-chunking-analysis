@@ -110,7 +110,7 @@ func outputResults(processorResults chan pcTraceResult, expTotalResults int, con
 			fmt.Printf("Processing traces... %d%%\n", (i*100)/expTotalResults)
 		}
 	}
-	var chunkerNames []string
+	chunkerNames := make([]string, 0, len(chunkerResults[0].chunkersMetrics))
 	for _, cm := range chunkerResults[0].chunkersMetrics {
 		chunkerNames = append(chunkerNames, cm.ChunkerName)
 	}
