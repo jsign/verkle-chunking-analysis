@@ -18,62 +18,54 @@ type pcTraceResult struct {
 
 	tx              string
 	execLength      int
+	receiptGas      uint64
 	chunkersMetrics []analysis.ChunkerMetrics
 }
 
-func processFiles(contractBytecodes map[common.Address][]byte, pcTraces []string, out chan<- pcTraceResult) {
-	for _, pcTracePath := range pcTraces {
+func processFiles(contractBytecodes map[common.Address][]byte, tracesPath []string, out chan<- pcTraceResult) {
+	chunkers := []analysis.Chunker{z31bytechunker.New(), z32bytechunker.New()}
+
+	for _, pcTracePath := range tracesPath {
 		pcTraceBytes, err := os.ReadFile(pcTracePath)
 		if err != nil {
 			out <- pcTraceResult{err: fmt.Errorf("error reading file: %w", err)}
 			return
 		}
 		buf := bytes.NewReader(pcTraceBytes)
-		var pcTrace PCTrace
-		if err := gob.NewDecoder(buf).Decode(&pcTrace); err != nil {
+		var txOutput traceOutput
+		if err := gob.NewDecoder(buf).Decode(&txOutput); err != nil {
 			out <- pcTraceResult{err: fmt.Errorf("error decoding file: %w", err)}
 			return
 		}
 
 		var traceLength int
-		for _, pcs := range pcTrace.ContractTraces {
-			traceLength += len(pcs.PCs)
+		for _, pcs := range txOutput.ContractsPCs {
+			traceLength += len(pcs)
 		}
 		_, txHash := path.Split(pcTracePath)
-		res := pcTraceResult{tx: txHash, execLength: traceLength}
+		res := pcTraceResult{tx: txHash, execLength: traceLength, receiptGas: txOutput.ReceiptGas}
 
-		touchedContracts := make([]common.Address, 0, len(pcTrace.ContractTraces))
-		for contractAddr := range pcTrace.ContractTraces {
+		touchedContracts := make([]common.Address, 0, len(txOutput.ContractsPCs))
+		for contractAddr := range txOutput.ContractsPCs {
 			touchedContracts = append(touchedContracts, contractAddr)
 		}
 
-		// TODO: create interface and list of chunkers below.
-
-		// 31-byte chunker
-		z31ByteChunker, err := z31bytechunker.New(touchedContracts, contractBytecodes)
-		if err != nil {
-			out <- pcTraceResult{err: fmt.Errorf("error creating z31ByteChunker: %w", err)}
-			return
-		}
-		for contractAddr, pcs := range pcTrace.ContractTraces {
-			for _, pc := range pcs.PCs {
-				z31ByteChunker.AccessPC(contractAddr, pc)
+		for _, ch := range chunkers {
+			if err := ch.Init(touchedContracts, contractBytecodes); err != nil {
+				out <- pcTraceResult{err: fmt.Errorf("error creating chunker: %s", err)}
+				return
 			}
-		}
-		res.chunkersMetrics = append(res.chunkersMetrics, z31ByteChunker.GetReport())
-
-		// 32-byte chunker
-		z32ByteChunker, err := z32bytechunker.New(touchedContracts, contractBytecodes)
-		if err != nil {
-			out <- pcTraceResult{err: fmt.Errorf("error creating z31ByteChunker: %w", err)}
-			return
-		}
-		for contractAddr, pcs := range pcTrace.ContractTraces {
-			for _, pc := range pcs.PCs {
-				z32ByteChunker.AccessPC(contractAddr, pc)
+			for contractAddr, pcs := range txOutput.ContractsPCs {
+				for _, pc := range pcs {
+					if err := ch.AccessPC(contractAddr, pc); err != nil {
+						out <- pcTraceResult{err: fmt.Errorf("error accessing pc: %s", err)}
+						return
+					}
+				}
 			}
+			res.chunkersMetrics = append(res.chunkersMetrics, ch.GetReport())
 		}
-		res.chunkersMetrics = append(res.chunkersMetrics, z32ByteChunker.GetReport())
+
 		out <- res
 	}
 }

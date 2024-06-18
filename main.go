@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,17 +15,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var pcTraceFolder = "/data/pctrace"
-
-type contractTrace struct {
-	PCs []uint64
-}
-
-type PCTrace struct {
-	ContractTraces map[common.Address]contractTrace
+type traceOutput struct {
+	ContractsPCs map[common.Address][]uint64
+	ReceiptGas   uint64
 }
 
 func main() {
+	pcTraceFolderFlag := flag.String("tracespath", "", "Full path of the folder containing the traces")
+	flag.Parse()
+
+	if pcTraceFolderFlag == nil || *pcTraceFolderFlag == "" {
+		fmt.Printf("Expected --tracespath <folder> flag\n")
+		os.Exit(1)
+	}
+	pcTraceFolder := *pcTraceFolderFlag
+
 	pcTracePaths, contractBytecodes, err := loadData(pcTraceFolder, -1)
 	if err != nil {
 		log.Fatal(err)
@@ -127,18 +132,22 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 	}
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
-	columns := []string{"tx", "execution_length"}
+	columns := []string{"tx", "execution_length", "receipt_gas"}
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_gas", cn))
 	}
-	csvGasWriter.Write(columns)
+	if err := csvGasWriter.Write(columns); err != nil {
+		return fmt.Errorf("could not write csv header: %s", err)
+	}
 
 	for _, result := range results {
-		line := []string{result.tx[:10], fmt.Sprintf("%d", result.execLength)}
+		line := []string{result.tx[:10], fmt.Sprintf("%d", result.execLength), fmt.Sprintf("%d", result.receiptGas)}
 		for _, cm := range result.chunkersMetrics {
 			line = append(line, fmt.Sprintf("%d", cm.Gas))
 		}
-		csvGasWriter.Write(line)
+		if err := csvGasWriter.Write(line); err != nil {
+			return fmt.Errorf("could not write csv line: %s", err)
+		}
 	}
 
 	return nil
@@ -155,7 +164,9 @@ func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, 
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_chunked_size", cn))
 	}
-	csvGasWriter.Write(columns)
+	if err := csvGasWriter.Write(columns); err != nil {
+		return fmt.Errorf("could not write csv header: %s", err)
+	}
 
 	contractChunkedSizes := map[common.Address][]int{}
 	for _, result := range results {
@@ -173,7 +184,9 @@ func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, 
 		for _, size := range chunkedSizes {
 			line = append(line, fmt.Sprintf("%d", size))
 		}
-		csvGasWriter.Write(line)
+		if err := csvGasWriter.Write(line); err != nil {
+			return fmt.Errorf("could not write csv line: %s", err)
+		}
 	}
 	return nil
 }

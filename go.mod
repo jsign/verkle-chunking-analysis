@@ -5,6 +5,7 @@ go 1.22.1
 require (
 	github.com/ethereum/go-ethereum v1.14.5
 	github.com/holiman/uint256 v1.2.4
+	golang.org/x/sync v0.4.0
 )
 
 require (
@@ -51,7 +52,6 @@ require (
 	github.com/tklauser/numcpus v0.2.2 // indirect
 	golang.org/x/crypto v0.10.0 // indirect
 	golang.org/x/exp v0.0.0-20230515195305-f3d0a9c9a5cc // indirect
-	golang.org/x/sync v0.4.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/text v0.10.0 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect

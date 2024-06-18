@@ -9,24 +9,30 @@ import (
 )
 
 type Chunker struct {
-	aw *state.AccessWitness
+	contractBytecodes map[common.Address][]byte
+	aw                *state.AccessWitness
 
 	gas             uint64
 	chunkedSizes    map[common.Address]int
 	contractPCShift map[common.Address]int
 }
 
-func New(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte) (*Chunker, error) {
-	ae := state.NewAccessWitness(nil)
+func New() *Chunker {
+	return &Chunker{}
+}
 
-	chunkedSizes := map[common.Address]int{}
-	var gas uint64
-	contractPCShift := map[common.Address]int{}
+func (c *Chunker) Init(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte) error {
+	*c = Chunker{
+		aw:                state.NewAccessWitness(nil),
+		chunkedSizes:      map[common.Address]int{},
+		contractPCShift:   map[common.Address]int{},
+		contractBytecodes: contractBytecodes,
+	}
 	for _, addr := range touchedContracts {
 		// The touched contracts are the tx destination, or contracts that are called by the tx.
 		// In any case, we warm those accounts headers since tx destination or *CALL targets will
 		// access the account header branch for at least CodeSize reasons.
-		ae.TouchTxExistingAndComputeGas(addr.Bytes(), false)
+		c.aw.TouchTxExistingAndComputeGas(addr.Bytes(), false)
 
 		// Generate JUMPDEST table and place it at the start in the account header, and calculate the shift for the
 		// rest of contract bytecodes for later `pc` mappings.
@@ -34,21 +40,21 @@ func New(touchedContracts []common.Address, contractBytecodes map[common.Address
 		var buf [3]byte
 		tableSizeEncoded := leb128Encode(buf[:], len(table))
 		totalTableSize := tableSizeEncoded + len(table)
-		gas += ae.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), 0, uint64(totalTableSize), uint64(totalTableSize), false)
-		contractPCShift[addr] = totalTableSize
+		c.gas += c.aw.TouchCodeChunksRangeAndChargeGas(addr.Bytes(), 0, uint64(totalTableSize), uint64(totalTableSize), false)
+		c.contractPCShift[addr] = totalTableSize
 
 		// Record contract chunked size, aligned to 32-bytes.
-		chunkedSizes[addr] = totalTableSize + len(contractBytecodes[addr])
-		if chunkedSizes[addr]%32 != 0 {
-			chunkedSizes[addr] += 32 - chunkedSizes[addr]%32
+		c.chunkedSizes[addr] = totalTableSize + len(contractBytecodes[addr])
+		if c.chunkedSizes[addr]%32 != 0 {
+			c.chunkedSizes[addr] += 32 - c.chunkedSizes[addr]%32
 		}
 
 	}
-	return &Chunker{aw: ae, gas: gas, contractPCShift: contractPCShift, chunkedSizes: chunkedSizes}, nil
+	return nil
 }
 
 func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
-	gas := c.touchCodeChunksRangeAndChargeGas(c.aw, addr.Bytes(), uint64(pc), 1, 1, false)
+	gas := c.touchCodeChunksRangeAndChargeGas(c.aw, addr.Bytes(), uint64(pc), 1, uint64(len(c.contractBytecodes[addr])), false)
 	c.gas += gas
 	return nil
 }
@@ -57,8 +63,6 @@ func (c *Chunker) GetReport() analysis.ChunkerMetrics {
 	return analysis.ChunkerMetrics{ChunkerName: "32bytechunker", Gas: c.gas, ContractsChunkedSize: c.chunkedSizes}
 }
 
-// This is a modified TouchCodeChunksRangeAndChargeGas function from the go-ethereum/core/state/access_witness.go
-// but adjusted for 32-byte chunking.
 func (c *Chunker) touchCodeChunksRangeAndChargeGas(aw *state.AccessWitness, contractAddr []byte, startPC, size uint64, codeLen uint64, isWrite bool) uint64 {
 	if (codeLen == 0 && size == 0) || startPC > codeLen {
 		return 0

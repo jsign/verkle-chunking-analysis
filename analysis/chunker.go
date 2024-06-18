@@ -9,6 +9,7 @@ type ChunkerMetrics struct {
 }
 
 type Chunker interface {
+	Init([]common.Address, map[common.Address][]byte) error
 	AccessPC(common.Address, uint64) error
 	GetReport() ChunkerMetrics
 }
