@@ -96,14 +96,8 @@ func (c *Chunker) touchCodeChunksRangeAndChargeGas(aw *state.AccessWitness, cont
 }
 
 const (
-	PUSH1  = byte(0x60)
-	PUSH3  = byte(0x62)
-	PUSH4  = byte(0x63)
-	PUSH7  = byte(0x66)
-	PUSH21 = byte(0x74)
-	PUSH30 = byte(0x7d)
-	PUSH32 = byte(0x7f)
-
+	PUSH1    = byte(0x60)
+	PUSH32   = byte(0x7f)
 	JUMPDEST = byte(0x5b)
 )
 
