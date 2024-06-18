@@ -185,10 +185,3 @@ func leb128Encode(buf []byte, value int) int {
 	}
 	return i
 }
-
-func min(x, y int) int {
-	if x > y {
-		return y
-	}
-	return x
-}
