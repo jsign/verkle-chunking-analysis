@@ -1,6 +1,6 @@
 # verke-chunking-analysis
 
-This is a tool that process a folder of generated _PC traces_ from a Geth [custom live tracer](https://github.com/jsign/go-ethereum/commit/152f63f98f94ecc2e189a2b74bdac091effccb89).
+This is a tool that process a folder of generated _PC traces_ from a Geth [custom live tracer](https://github.com/jsign/go-ethereum/blob/jsign/livetracer/eth/tracers/live/pctrace.go).
 
 You can read more about a mainnet analysis done with this tool looking at [this document](https://hackmd.io/@jsign/verkle-code-mainnet-chunking-analysis).
 
