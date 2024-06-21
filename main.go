@@ -18,6 +18,7 @@ import (
 type traceOutput struct {
 	ContractsPCs map[common.Address][]uint64
 	ReceiptGas   uint64
+	To           common.Address
 }
 
 func main() {
@@ -132,7 +133,7 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 	}
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
-	columns := []string{"tx", "execution_length", "receipt_gas"}
+	columns := []string{"tx", "execution_length", "receipt_gas", "to"}
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_gas", cn))
 	}
@@ -141,7 +142,7 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 	}
 
 	for _, result := range results {
-		line := []string{result.tx[:10], fmt.Sprintf("%d", result.execLength), fmt.Sprintf("%d", result.receiptGas)}
+		line := []string{result.tx, fmt.Sprintf("%d", result.execLength), fmt.Sprintf("%d", result.receiptGas), result.to.Hex()}
 		for _, cm := range result.chunkersMetrics {
 			line = append(line, fmt.Sprintf("%d", cm.Gas))
 		}

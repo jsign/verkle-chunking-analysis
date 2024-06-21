@@ -19,6 +19,7 @@ type pcTraceResult struct {
 	tx              string
 	execLength      int
 	receiptGas      uint64
+	to              common.Address
 	chunkersMetrics []analysis.ChunkerMetrics
 }
 
@@ -43,7 +44,7 @@ func processFiles(contractBytecodes map[common.Address][]byte, tracesPath []stri
 			traceLength += len(pcs)
 		}
 		_, txHash := path.Split(pcTracePath)
-		res := pcTraceResult{tx: txHash, execLength: traceLength, receiptGas: txOutput.ReceiptGas}
+		res := pcTraceResult{tx: txHash, execLength: traceLength, receiptGas: txOutput.ReceiptGas, to: txOutput.To}
 
 		touchedContracts := make([]common.Address, 0, len(txOutput.ContractsPCs))
 		for contractAddr := range txOutput.ContractsPCs {
