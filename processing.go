@@ -23,7 +23,11 @@ type pcTraceResult struct {
 	chunkersMetrics []analysis.ChunkerMetrics
 }
 
-func processFiles(contractBytecodes map[common.Address][]byte, tracesPath []string, out chan<- pcTraceResult) {
+func processFiles(
+	contractBytecodes map[common.Address][]byte,
+	tracesPath []string,
+	filterContractsChunksStats map[common.Address]struct{},
+	out chan<- pcTraceResult) {
 	chunkers := []analysis.Chunker{z31bytechunker.New(), z32bytechunker.New()}
 
 	for _, pcTracePath := range tracesPath {
@@ -51,8 +55,9 @@ func processFiles(contractBytecodes map[common.Address][]byte, tracesPath []stri
 			touchedContracts = append(touchedContracts, contractAddr)
 		}
 
+		_, enableChunksStats := filterContractsChunksStats[txOutput.To]
 		for _, ch := range chunkers {
-			if err := ch.Init(touchedContracts, contractBytecodes); err != nil {
+			if err := ch.Init(touchedContracts, contractBytecodes, enableChunksStats); err != nil {
 				out <- pcTraceResult{err: fmt.Errorf("error creating chunker: %s", err)}
 				return
 			}

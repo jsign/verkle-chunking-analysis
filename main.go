@@ -9,6 +9,8 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -23,13 +25,20 @@ type traceOutput struct {
 
 func main() {
 	pcTraceFolderFlag := flag.String("tracespath", "", "Full path of the folder containing the traces")
+	filterContractsChunksStatsFlag := flag.String("filter-contracts-chunks-stats", "", "Comma separated list of contract addresses to filter the chunks stats csv file.")
 	flag.Parse()
 
-	if pcTraceFolderFlag == nil || *pcTraceFolderFlag == "" {
+	if *pcTraceFolderFlag == "" {
 		fmt.Printf("Expected --tracespath <folder> flag\n")
 		os.Exit(1)
 	}
 	pcTraceFolder := *pcTraceFolderFlag
+
+	filterContractsChunksStatsStr := strings.Split(*filterContractsChunksStatsFlag, ",")
+	filteredContractsChunksStats := make(map[common.Address]struct{}, len(filterContractsChunksStatsStr))
+	for _, addrStr := range filterContractsChunksStatsStr {
+		filteredContractsChunksStats[common.HexToAddress(addrStr)] = struct{}{}
+	}
 
 	pcTracePaths, contractBytecodes, err := loadData(pcTraceFolder, -1)
 	if err != nil {
@@ -41,9 +50,9 @@ func main() {
 	processorResults := make(chan pcTraceResult)
 	for i := 0; i < numProcessors; i++ {
 		if i == numProcessors-1 {
-			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:], processorResults)
+			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:], filteredContractsChunksStats, processorResults)
 		} else {
-			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:(i+1)*sliceSize], processorResults)
+			go processFiles(contractBytecodes, pcTracePaths[i*sliceSize:(i+1)*sliceSize], filteredContractsChunksStats, processorResults)
 		}
 	}
 
@@ -99,38 +108,65 @@ func loadData(folderPath string, limit int) ([]string, map[common.Address][]byte
 	return pcTracesPaths, contractBytecodes, nil
 }
 
-func outputResults(processorResults chan pcTraceResult, expTotalResults int, contractsBytecodes map[common.Address][]byte) error {
-	chunkerResults := make([]pcTraceResult, 0, expTotalResults)
+func outputResults(
+	processorResults chan pcTraceResult,
+	expTotalResults int,
+	contractsBytecodes map[common.Address][]byte) error {
+
+	fanout := make([]chan pcTraceResult, 3)
+	for i := range fanout {
+		fanout[i] = make(chan pcTraceResult, 1_000)
+	}
+
+	chunkerNames := []string{"31bytechunker", "32bytechunker"} // TODO: fix
+	group, _ := errgroup.WithContext(context.Background())
+	group.Go(func() error {
+		if err := genGasCSV(fanout[0], chunkerNames); err != nil {
+			return fmt.Errorf("error exporting gas csv: %s", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		if err := genChunkedContractSizesCSV(fanout[1], chunkerNames, contractsBytecodes); err != nil {
+			return fmt.Errorf("error exporting contracts chunked sizes csv: %s", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		if err := genChunksStatsCSV(fanout[2]); err != nil {
+			return fmt.Errorf("error exporting chunks stats csv: %s", err)
+		}
+		return nil
+	})
+
 	for i := 0; i < expTotalResults; i++ {
 		result := <-processorResults
 		if result.err != nil {
 			return fmt.Errorf("error processing: %s", result.err)
 		}
-		chunkerResults = append(chunkerResults, result)
+		for i := 0; i < len(fanout); i++ {
+			fanout[i] <- result
+		}
 		if i%(expTotalResults/8) == 0 {
 			fmt.Printf("Processing traces... %d%%\n", (i*100)/expTotalResults)
 		}
 	}
-	chunkerNames := make([]string, 0, len(chunkerResults[0].chunkersMetrics))
-	for _, cm := range chunkerResults[0].chunkersMetrics {
-		chunkerNames = append(chunkerNames, cm.ChunkerName)
+	for i := range fanout {
+		close(fanout[i])
 	}
-
-	if err := genGasCSV(chunkerResults, chunkerNames); err != nil {
-		return fmt.Errorf("error exporting gas csv: %s", err)
-	}
-	if err := genChunkedContractSizesCSV(chunkerResults, chunkerNames, contractsBytecodes); err != nil {
-		return fmt.Errorf("error exporting gas csv: %s", err)
+	if err := group.Wait(); err != nil {
+		return fmt.Errorf("error exporting results: %s", err)
 	}
 
 	return nil
 }
 
-func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
+func genGasCSV(results chan pcTraceResult, chunkerNames []string) error {
 	csvGas, err := os.OpenFile("gas_analysis.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not create file: %s", err)
 	}
+	defer csvGas.Close()
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
 	columns := []string{"tx", "execution_length", "receipt_gas", "to"}
@@ -141,7 +177,7 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 		return fmt.Errorf("could not write csv header: %s", err)
 	}
 
-	for _, result := range results {
+	for result := range results {
 		line := []string{result.tx, fmt.Sprintf("%d", result.execLength), fmt.Sprintf("%d", result.receiptGas), result.to.Hex()}
 		for _, cm := range result.chunkersMetrics {
 			line = append(line, fmt.Sprintf("%d", cm.Gas))
@@ -154,11 +190,12 @@ func genGasCSV(results []pcTraceResult, chunkerNames []string) error {
 	return nil
 }
 
-func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, contractBytecodes map[common.Address][]byte) error {
-	csvGas, err := os.OpenFile("chunker_contract_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+func genChunkedContractSizesCSV(results chan pcTraceResult, chunkerNames []string, contractBytecodes map[common.Address][]byte) error {
+	csvGas, err := os.OpenFile("contracts_chunked_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not create file: %s", err)
 	}
+	defer csvGas.Close()
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
 	columns := []string{"contract_addr", "original_size"}
@@ -170,13 +207,13 @@ func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, 
 	}
 
 	contractChunkedSizes := map[common.Address][]int{}
-	for _, result := range results {
+	for result := range results {
 		for chunkerIdx, cm := range result.chunkersMetrics {
-			for addr, size := range cm.ContractsChunkedSize {
+			for addr, stats := range cm.ContractsStats {
 				if contractChunkedSizes[addr] == nil {
 					contractChunkedSizes[addr] = make([]int, len(chunkerNames))
 				}
-				contractChunkedSizes[addr][chunkerIdx] = size
+				contractChunkedSizes[addr][chunkerIdx] = stats.ChunkedSizeBytes
 			}
 		}
 	}
@@ -191,3 +228,46 @@ func genChunkedContractSizesCSV(results []pcTraceResult, chunkerNames []string, 
 	}
 	return nil
 }
+
+func genChunksStatsCSV(results chan pcTraceResult) error {
+	fCsvGas, err := os.OpenFile("contracts_chunks_stats.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("could not create file: %s", err)
+	}
+	defer fCsvGas.Close()
+	csvChunksStatsWriter := csv.NewWriter(fCsvGas)
+	defer csvChunksStatsWriter.Flush()
+
+	columns := []string{"tx", "to", "contract_addr", "chunk_number", "bytes_used", "gas_used"}
+	if err := csvChunksStatsWriter.Write(columns); err != nil {
+		return fmt.Errorf("could not write csv header: %s", err)
+	}
+
+	for result := range results {
+		for contractAddr, stats := range result.chunkersMetrics[0].ContractsStats {
+			if len(stats.ChunksStats) == 0 {
+				continue
+			}
+			line := []string{result.tx, result.to.Hex(), contractAddr.Hex()}
+			for _, chunkStats := range stats.ChunksStats {
+				line = append(line, strconv.Itoa(chunkStats.ChunkNumber))
+				line = append(line, strconv.Itoa(chunkStats.AccessedBytes))
+				line = append(line, strconv.FormatUint(chunkStats.ChargedGas, 10))
+			}
+			if err := csvChunksStatsWriter.Write(line); err != nil {
+				return fmt.Errorf("could not write csv line: %s", err)
+			}
+		}
+	}
+	return nil
+}
+
+// tx, to, contractAddr, chunkNumber, bytes_used, gas_used
+
+// Chunk stats (on average per tx):
+//     - Accessed # code-chunks and would've charged {} code-access gas.
+//     - Charged {} WITNESS_BRANCH_COSTs
+//     - Charged {} WITNESS_CHUNK_COSTs
+//     - Executed {} bytes (i.e: instruction bytes), and paid for {} bytes (i.e: chunks bytes)
+//
+// Txs on average involved executing {} contracts.

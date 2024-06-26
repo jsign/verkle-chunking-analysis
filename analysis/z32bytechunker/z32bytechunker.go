@@ -21,7 +21,7 @@ func New() *Chunker {
 	return &Chunker{}
 }
 
-func (c *Chunker) Init(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte) error {
+func (c *Chunker) Init(touchedContracts []common.Address, contractBytecodes map[common.Address][]byte, _ bool) error {
 	*c = Chunker{
 		aw:                state.NewAccessWitness(nil),
 		chunkedSizes:      map[common.Address]int{},
@@ -59,7 +59,17 @@ func (c *Chunker) AccessPC(addr common.Address, pc uint64) error {
 }
 
 func (c *Chunker) GetReport() analysis.ChunkerMetrics {
-	return analysis.ChunkerMetrics{ChunkerName: "32bytechunker", Gas: c.gas, ContractsChunkedSize: c.chunkedSizes}
+	contractStats := make(map[common.Address]analysis.ContractStats)
+	for addr, size := range c.chunkedSizes {
+		contractStats[addr] = analysis.ContractStats{
+			ChunkedSizeBytes: size,
+		}
+	}
+	return analysis.ChunkerMetrics{
+		ChunkerName:    "32bytechunker",
+		Gas:            c.gas,
+		ContractsStats: contractStats,
+	}
 }
 
 func (c *Chunker) touchCodeChunksRangeAndChargeGas(aw *state.AccessWitness, contractAddr []byte, startPC, size uint64, codeLen uint64, isWrite bool) uint64 {
