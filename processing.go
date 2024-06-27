@@ -16,11 +16,12 @@ import (
 type pcTraceResult struct {
 	err error
 
-	tx              string
-	execLength      int
-	receiptGas      uint64
-	to              common.Address
-	chunkersMetrics []analysis.ChunkerMetrics
+	tx               string
+	execLength       int
+	receiptGas       uint64
+	to               common.Address
+	numExecContracts int
+	chunkersMetrics  []analysis.ChunkerMetrics
 }
 
 func processFiles(
@@ -48,7 +49,13 @@ func processFiles(
 			traceLength += len(pcs)
 		}
 		_, txHash := path.Split(pcTracePath)
-		res := pcTraceResult{tx: txHash, execLength: traceLength, receiptGas: txOutput.ReceiptGas, to: txOutput.To}
+		res := pcTraceResult{
+			tx:               txHash,
+			to:               txOutput.To,
+			execLength:       traceLength,
+			receiptGas:       txOutput.ReceiptGas,
+			numExecContracts: len(txOutput.ContractsPCs),
+		}
 
 		touchedContracts := make([]common.Address, 0, len(txOutput.ContractsPCs))
 		for contractAddr := range txOutput.ContractsPCs {

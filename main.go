@@ -169,7 +169,7 @@ func genGasCSV(results chan pcTraceResult, chunkerNames []string) error {
 	defer csvGas.Close()
 	csvGasWriter := csv.NewWriter(csvGas)
 	defer csvGasWriter.Flush()
-	columns := []string{"tx", "execution_length", "receipt_gas", "to"}
+	columns := []string{"tx", "execution_length", "receipt_gas", "to", "num_exec_contracts"}
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_gas", cn))
 	}
@@ -178,7 +178,13 @@ func genGasCSV(results chan pcTraceResult, chunkerNames []string) error {
 	}
 
 	for result := range results {
-		line := []string{result.tx, fmt.Sprintf("%d", result.execLength), fmt.Sprintf("%d", result.receiptGas), result.to.Hex()}
+		line := []string{
+			result.tx,
+			strconv.FormatUint(uint64(result.execLength), 10),
+			strconv.FormatUint(result.receiptGas, 10),
+			result.to.Hex(),
+			strconv.FormatUint(uint64(result.numExecContracts), 10),
+		}
 		for _, cm := range result.chunkersMetrics {
 			line = append(line, fmt.Sprintf("%d", cm.Gas))
 		}
@@ -191,18 +197,18 @@ func genGasCSV(results chan pcTraceResult, chunkerNames []string) error {
 }
 
 func genChunkedContractSizesCSV(results chan pcTraceResult, chunkerNames []string, contractBytecodes map[common.Address][]byte) error {
-	csvGas, err := os.OpenFile("contracts_chunked_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	csvContractSizes, err := os.OpenFile("contracts_chunked_sizes.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not create file: %s", err)
 	}
-	defer csvGas.Close()
-	csvGasWriter := csv.NewWriter(csvGas)
-	defer csvGasWriter.Flush()
+	defer csvContractSizes.Close()
+	csvContractSizesWriter := csv.NewWriter(csvContractSizes)
+	defer csvContractSizesWriter.Flush()
 	columns := []string{"contract_addr", "original_size"}
 	for _, cn := range chunkerNames {
 		columns = append(columns, fmt.Sprintf("%s_chunked_size", cn))
 	}
-	if err := csvGasWriter.Write(columns); err != nil {
+	if err := csvContractSizesWriter.Write(columns); err != nil {
 		return fmt.Errorf("could not write csv header: %s", err)
 	}
 
@@ -222,7 +228,7 @@ func genChunkedContractSizesCSV(results chan pcTraceResult, chunkerNames []strin
 		for _, size := range chunkedSizes {
 			line = append(line, fmt.Sprintf("%d", size))
 		}
-		if err := csvGasWriter.Write(line); err != nil {
+		if err := csvContractSizesWriter.Write(line); err != nil {
 			return fmt.Errorf("could not write csv line: %s", err)
 		}
 	}
@@ -230,12 +236,12 @@ func genChunkedContractSizesCSV(results chan pcTraceResult, chunkerNames []strin
 }
 
 func genChunksStatsCSV(results chan pcTraceResult) error {
-	fCsvGas, err := os.OpenFile("contracts_chunks_stats.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	csvChunksStats, err := os.OpenFile("contracts_chunks_stats.csv", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("could not create file: %s", err)
 	}
-	defer fCsvGas.Close()
-	csvChunksStatsWriter := csv.NewWriter(fCsvGas)
+	defer csvChunksStats.Close()
+	csvChunksStatsWriter := csv.NewWriter(csvChunksStats)
 	defer csvChunksStatsWriter.Flush()
 
 	columns := []string{"tx", "to", "contract_addr", "chunk_number", "bytes_used", "gas_used"}
@@ -245,29 +251,16 @@ func genChunksStatsCSV(results chan pcTraceResult) error {
 
 	for result := range results {
 		for contractAddr, stats := range result.chunkersMetrics[0].ContractsStats {
-			if len(stats.ChunksStats) == 0 {
-				continue
-			}
-			line := []string{result.tx, result.to.Hex(), contractAddr.Hex()}
 			for _, chunkStats := range stats.ChunksStats {
+				line := []string{result.tx, result.to.Hex(), contractAddr.Hex()}
 				line = append(line, strconv.Itoa(chunkStats.ChunkNumber))
 				line = append(line, strconv.Itoa(chunkStats.AccessedBytes))
 				line = append(line, strconv.FormatUint(chunkStats.ChargedGas, 10))
-			}
-			if err := csvChunksStatsWriter.Write(line); err != nil {
-				return fmt.Errorf("could not write csv line: %s", err)
+				if err := csvChunksStatsWriter.Write(line); err != nil {
+					return fmt.Errorf("could not write csv line: %s", err)
+				}
 			}
 		}
 	}
 	return nil
 }
-
-// tx, to, contractAddr, chunkNumber, bytes_used, gas_used
-
-// Chunk stats (on average per tx):
-//     - Accessed # code-chunks and would've charged {} code-access gas.
-//     - Charged {} WITNESS_BRANCH_COSTs
-//     - Charged {} WITNESS_CHUNK_COSTs
-//     - Executed {} bytes (i.e: instruction bytes), and paid for {} bytes (i.e: chunks bytes)
-//
-// Txs on average involved executing {} contracts.
